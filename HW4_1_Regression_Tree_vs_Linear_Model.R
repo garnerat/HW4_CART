@@ -20,6 +20,13 @@ set.seed(1984)
 
 index <- sample(1:nrow(Boston),nrow(Boston)*.7)
 
+# Alternate set of data
+
+set.seed(5001)
+
+index <- sample(1:nrow(Boston),nrow(Boston)*.8)
+
+
 train <- Boston[index,]
 
 test <- Boston[-index,]
@@ -175,9 +182,10 @@ plotcp(model.tree) # prune tree to size of 6
 
 printcp(model.tree)
 
-model.tree.pruned <- prune.rpart(model.tree, cp =.015)
+model.tree.pruned <- prune.rpart(model.tree, cp = model.tree$cptable[which.min(model.tree$cptable[,"xerror"]),"CP"])
 
-rpart.plot(model.tree.pruned,tweak = 1.2)
+# trying out rattle package's "fancyRpartPlot"
+fancyRpartPlot(model.tree.pruned, uniform=TRUE, main="Pruned Classification Tree")
 
 # out of sample prediction (pruned tree)
 
@@ -187,4 +195,3 @@ test.pred.prune = predict(model.tree.pruned, test)
 
 mean((test.pred.prune - test$medv)^2)
 
-# Try Cross Validation Methods outlined here https://www.stat.cmu.edu/~cshalizi/350/lectures/22/lecture-22.pdf

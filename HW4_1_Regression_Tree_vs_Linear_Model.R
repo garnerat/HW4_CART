@@ -24,7 +24,7 @@ index <- sample(1:nrow(Boston),nrow(Boston)*.7)
 
 set.seed(5001)
 
-index <- sample(1:nrow(Boston),nrow(Boston)*.8)
+index <- sample(1:nrow(Boston),nrow(Boston)*.7)
 
 
 train <- Boston[index,]

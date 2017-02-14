@@ -6,7 +6,7 @@
 ##### install packages #####
 
 
-packages <- c("ggplot2","GGally","rpart","caret","leaps","boot","reshape2")
+packages <- c("ggplot2","GGally","rpart","caret","leaps","boot","reshape2", "ROCR")
 
 install.packages(packages)
 
@@ -33,7 +33,13 @@ german_credit$response = german_credit$response - 1
 
 ##### Partition Train/Test #####
 
+# seed for data split 1
+
 set.seed(1984)
+
+# seed for data split 1
+
+set.seed(5001)
 
 index <- sample(1:nrow(german_credit),nrow(german_credit)*.7)
 
@@ -125,19 +131,124 @@ step.probit = step(nullmodel.probit, scope = list(lower = nullmodel.probit, uppe
 
 step.loglog = step(nullmodel.loglog , scope = list(lower = nullmodel.loglog , upper = fullmodel.loglog ), direction = "both")
 
+# Compare GLMs
+
+#AIC
+
+AIC(backward.logit)
+AIC(backward.probit)
+AIC(backward.loglog)
+AIC(forward.logit)
+AIC(forward.probit)
+AIC(forward.loglog)
+AIC(step.logit)
+AIC(step.probit)
+AIC(step.loglog)
+
+# Each link had essentially the same AIC with one of the three selection methods ~ 688
+
+#BIC
+
+BIC(backward.logit)
+BIC(backward.probit)
+BIC(backward.loglog)
+BIC(forward.logit)
+BIC(forward.probit)
+BIC(forward.loglog)
+BIC(step.logit)
+BIC(step.probit)
+BIC(step.loglog)
+
+# complementary log-log link with forward stepwise selection had the best BIC 833
+# followed by backward selection with logit with 838
 
 ##### Logistic Regression #####
 
-model.logistic <- glm(response ~ . ,family = binomial, data = train)
-summary(model.logistic)
+# best logit model from above by AIC/BIC was found with backward selection
 
-# AIC
+summary(backward.logit)
 
-step.logistic <- step(model.logistic)
+# Residual deviance: 621.82  on 667  degrees of freedom
 
-# BIC
+# important variable levels - can compare to splits in classification tree
+# 
+# chk_acctA12     .  
+# chk_acctA13       *  
+#   chk_acctA14       ***
+#   duration           *  
+#  
+# credit_hisA33     *  
+#   credit_hisA34    ***
+#   purposeA41       ***
+# purposeA42       ***
+#   purposeA43   ***
+#    
+# 
+# purposeA48       .  
+# purposeA49        *  
+#   amount           *  
+# saving_acctA64   .  
+# saving_acctA65  ** 
+# present_empA74    *  
+# installment_rate   *  
+# other_debtorA103  .  
+# age               *  
+#   n_credits        *  
+#   foreignA202      *  
 
-step.logistic.BIC <- step(model.logistic, k = log(nrow(train)))
+
+###### In-sample Confusion Matrix, ROC, AUC #####
+
+# Confusion Matrix
+
+prob.in.sample <- predict(backward.logit,  type = "response") 
+
+# using 1/6 for classification cut-off
+prob.in.sample.binary <- as.numeric(predict(backward.logit,  type = "response") > (1/6))
+
+#using confusionMatrix for caret package - picking 0 as "positive", but that won't affect accuracy calc
+confusion.in.sample <-confusionMatrix(prob.in.sample.binary,train$response)
+
+# Misclassification Rate: 33.29%
+
+
+# In-sample ROC
+pred <- prediction(prob.in.sample, train$response)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize = TRUE)
+
+# In-Sample AUC
+auc.perf = performance(pred, measure = "auc")
+auc.perf@y.values
+
+# 0.838
+
+
+###### Out-of-Sample Confusion Matrix, ROC, AUC #####
+
+# Confusion Matrix
+
+prob.out.sample <- predict(backward.logit, test, type = "response")
+
+prob.out.sample.binary <- as.numeric(predict(backward.logit, test, type = "response") > (1/6))
+
+#using confusionMatrix for caret package - picking 0 as "positive", but that won't affect accuracy calc
+confusionMatrix(prob.out.sample.binary,test$response)
+
+# Misclassification Rate: 39.33%
+
+# ROC
+
+pred <- prediction(prob.out.sample, test$response)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize = TRUE)
+
+# AUC
+
+auc.perf = performance(pred, measure = "auc")
+auc.perf@y.values
+
+# 0.7585
 
 
 ##### find cutoff probability with lowest cost #####
@@ -160,27 +271,126 @@ cost1 <- function(r, pi) {
 for (i in 1:length(searchgrid)) {
   pcut <- result[i, 1]
   # assign the cost to the 2nd col
-  result[i, 2] <- cost1(train$response, predict(step.logistic, type = "response"))
+  result[i, 2] <- cost1(train$response, predict(backward.logit, type = "response"))
 }
-plot(result, ylab = "Cost in Training Set") #.23 is cutoff with smallest cost
+plot(result, ylab = "Cost in Training Set") 
 
-###### Confusion Matrix, ROC, AUC #####
+result[which.min(result[,2]),1] # 0.13 is cutoff with smallest cost
 
-# Confusion Matrix
-prob.outsample <- predict(step.logistic, test, type = "response")
+##### Cross Validation #####
 
-prob.outsample.binary <- as.numeric(predict(step.logistic, test, type = "response") > 0.23)
+searchgrid = seq(0.01, 0.4, 0.02)
+result.cv = cbind(searchgrid, NA)
+cost1 <- function(r, pi) {
+  weight1 = 5
+  weight0 = 1
+  c1 = (r == 1) & (pi < pcut)  #logical vector - true if actual 1 but predict 0
+  c0 = (r == 0) & (pi > pcut)  #logical vecotr - true if actual 0 but predict 1
+  return(mean(weight1 * c1 + weight0 * c0))
+}
 
-confusionMatrix(prob.outsample.binary,test$response)
+# logistic
+nullmodel.logit.cv = glm(response ~ 1 ,family = binomial(link="logit"), data = german_credit)
+fullmodel.logit.cv = glm(response ~ . ,family = binomial(link="logit"), data = german_credit)
+
+backward.logit.cv = step(fullmodel.logit.cv, direction = "backward")
+
+
+
+for (i in 1:length(searchgrid)) {
+  set.seed(567)
+  pcut <- result.cv[i, 1]
+  result.cv[i, 2] <- cv.glm(data = german_credit, glmfit = backward.logit.cv, cost = cost1, 
+                         K = 3)$delta[2]
+}
+
+plot(result.cv, ylab = "CV Cost")
+
+result[which.min(result.cv[,2]),1]
+
+# Cross Validation yielded an optimal cut-off to reduce cost at 0.15
+
+pcut <- 0.15
+
+cv.final <- cv.glm(data = german_credit, glmfit = backward.logit.cv, cost = cost1, K = 3)
+
+cv.final
+
+# The estimated prediction error was 0.495 -> 49.5% ? 
+
+
+##### Classification Tree ######
+
+model.class.tree <- rpart(formula = response ~ ., data = train, method = "class", 
+                      parms = list(loss = matrix(c(0, 5, 1, 0), nrow = 2)))
+
+# plot classification tree
+rpart.plot(model.class.tree,tweak = 1.5)
+
+##### In-Sample Misclassification Rate, ROC, AUC #####
+
+in.sample.binary.class.tree = predict(model.class.tree, type = "class")
+in.sample.binary.table <- table(train$response, in.sample.binary.class.tree, dnn = c("Truth", "Predicted"))
+
+# Misclassification rate
+1 - (in.sample.binary.table[1,1]+in.sample.binary.table[2,2])/sum(in.sample.binary.table)
+# In-sample misclassification rate: 27.1%
 
 # ROC
-install.packages("ROCR")
-library(ROCR)
-pred <- prediction(prob.outsample, test$response)
-perf <- performance(pred, "tpr", "fpr")
-plot(perf, colorize = TRUE)
 
-# AUC
-auc.perf = performance(pred, measure = "auc")
-auc.perf@y.values
+in.sample.pred.class.tree = predict(model.class.tree)
+pred.class.tree = prediction(in.sample.pred.class.tree[, 2], train$response)
+perf.class.tree = performance(pred.class.tree, "tpr", "fpr")
+plot(perf.class.tree, colorize = TRUE)
 
+# AUC 
+
+slot(performance(pred.class.tree, "auc"), "y.values")[[1]]
+
+# .8374
+
+##### Out-of-Sample Misclassification Rate, ROC, AUC #####
+
+out.sample.binary.class.tree = predict(model.class.tree, test, type = "class")
+out.sample.binary.table <- table(test$response, out.sample.binary.class.tree, dnn = c("Truth", "Predicted"))
+
+# Misclassification rate
+1 - (out.sample.binary.table[1,1]+out.sample.binary.table[2,2])/sum(out.sample.binary.table)
+# In-sample misclassification rate: 34.7%
+
+# ROC
+
+out.sample.pred.class.tree = predict(model.class.tree,test)
+out.pred.class.tree = prediction(out.sample.pred.class.tree[, 2], test$response)
+out.perf.class.tree = performance(out.pred.class.tree, "tpr", "fpr")
+plot(out.perf.class.tree, colorize = TRUE)
+
+# AUC 
+
+slot(performance(out.pred.class.tree, "auc"), "y.values")[[1]]
+
+# 0.7249
+
+
+##### Prune Tree #####
+
+plotcp(model.class.tree) # prune tree to size of 6
+
+printcp(model.class.tree)
+
+model.class.tree.pruned <- prune.rpart(model.class.tree, cp = model.class.tree$cptable[which.min(model.class.tree$cptable[,"xerror"]),"CP"])
+
+# trying out rattle package's "fancyRpartPlot"
+fancyRpartPlot(model.class.tree.pruned, uniform=TRUE, main="Pruned Classification Tree")
+
+# out of sample prediction (pruned tree)
+
+
+
+out.sample.binary.class.tree = predict(model.class.tree.pruned, test, type = "class")
+out.sample.binary.table <- table(test$response, out.sample.binary.class.tree, dnn = c("Truth", "Predicted"))
+
+# Out-of-Sample Misclassification rate for pruned tree
+1 - (out.sample.binary.table[1,1]+out.sample.binary.table[2,2])/sum(out.sample.binary.table)
+
+#36.7% slightly worse than non-pruned tree

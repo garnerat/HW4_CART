@@ -9,12 +9,9 @@ packages<- c("MASS","caret","ggplot2","GGally","boot","rpart","rpart.plot")
 install.packages(packages)
 lapply(as.list(packages),library, character.only = TRUE)
 
-##### #####
+##### Partition Train/Test #####
 
 data("Boston")
-
-
-##### Partition Train/Test #####
 
 set.seed(1984)
 
